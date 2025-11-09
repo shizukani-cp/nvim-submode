@@ -151,9 +151,28 @@ describe("Trie (トークナイズ対応)", function()
     end)
   end)
 
+  describe("value", function()
+    before_each(function()
+      trie:insert("a", function()
+        return "a"
+      end)
+      trie:insert("aa", "aa")
+      trie:insert("ab", function()
+        return "ab"
+      end)
+    end)
 
-describe(":findStartsWith()", function()
+    it("それぞれの関数を呼び出す", function()
+      assert.are.equal(3, trie:countStartsWith("a"))
+      assert.equal("a", trie:getLeaf("a").value())
+      assert.equal("aa", trie:getLeaf("aa").value)
+      assert.equal("ab", trie:getLeaf("ab").value())
+      assert.equal("ab", trie:getLeaf("ab").value())
+      assert.equal(nil, trie:getLeaf("ac"))
+    end)
+  end)
 
+  describe(":findStartsWith()", function()
     -- テスト用のヘルパー関数:
     -- 2つのテーブル（配列）をソートして内容が同じか比較する
     local function assert_tables_are_same_set(actual, expected)

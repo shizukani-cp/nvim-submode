@@ -1,9 +1,11 @@
 --- @class TrieNode
 --- @field children table<string, TrieNode> A map from a token (string) to its child TrieNode.
 --- @field isEndOfWord boolean True if this node marks the end of a valid word.
+--- @field value function|string|nil value of each leaf
 local function createNode()
     return {
         children = {},
+        value = nil,
         isEndOfWord = false
     }
 end
@@ -54,7 +56,8 @@ end
 
 --- Inserts a word (or token sequence) into the trie.
 --- @param word string The word to insert.
-function Trie:insert(word)
+--- @param value function|string The value of the word
+function Trie:insert(word, value)
     --- @type TrieNode
     local node = self.root
     for _, token in ipairs(splitTokens(word)) do
@@ -64,6 +67,7 @@ function Trie:insert(word)
         node = node.children[token]
     end
     node.isEndOfWord = true
+    node.value = value
 end
 
 --- Searches for a complete word in the trie.
@@ -94,6 +98,19 @@ function Trie:startsWith(prefix)
         node = node.children[token]
     end
     return true
+end
+--- get each leaf if exists
+--- @param prefix string The prifix
+--- @return TrieNode | nil
+function Trie:getLeaf(prefix)
+    local node = self.root
+    for _, token in ipairs(splitTokens(prefix)) do
+        if not node.children[token] then
+            return nil
+        end
+        node = node.children[token]
+    end
+    return node
 end
 
 --- Recursive helper to count all words in the subtree starting from a given node.
@@ -162,6 +179,5 @@ function Trie:findStartsWith(prefix)
 
     return results
 end
-
 
 return Trie
