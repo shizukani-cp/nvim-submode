@@ -14,7 +14,7 @@ local crazy_f = {
   {
     'f<any>',
     function(_, keys, anys)
-      -- vim.print(keys, anys)
+      print("f<any>")
       --
       return M.replace_any(keys, anys)
     end,
@@ -27,6 +27,7 @@ local crazy_f = {
     function(_, _, _)
       print("notify:a")
       vim.notify("notify:a")
+      return 'j'
       --return "<ignore>a"
     end
   },
@@ -41,8 +42,8 @@ local crazy_f = {
   {
     'g<any><any><any>',
     function(count, keys, anys)
-      vim.print(M.replace_any(keys, anys))
-      return "gggg" .. tostring(count)
+      vim.notify(tostring(count) .. M.replace_any(keys, anys))
+      --return "gggg" .. tostring(count)
     end,
     {
       desc = 'same as f in normal mode',
@@ -62,8 +63,25 @@ local crazy_f = {
       desc = 'same as ; in normal mode',
     }
   },
+  {
+    'f',
+    function()
+      vim.notify("SEND:;")
+      return ';'
+    end,
+    {
+      desc = 'same as , in normal mode',
+    }
+  },
+  {
+    'F',
+    ',',
+    {
+      desc = 'same as ; in normal mode',
+    }
+  },
 }
-
+--- hjjjjhjjjjjjhjjjjjhjjjjhjjjjhhjjjj
 local clever_f = {
   {
     'f',
@@ -89,9 +107,6 @@ M.context = {
 
   timeoutlen_timer = nil,
 
-  defer_cb = function()
-
-  end
 }
 
 
@@ -125,14 +140,13 @@ function M.replace_any(keys, anys)
 end
 
 local function disable_input_barrier()
-  debugPrint("DISABLE barrier")
+  --debugPrint("DISABLE barrier")
   vim.on_key(nil, M.context.barrier_ns)
   M.context.barrier_ns = nil
 end
 
 local function enable_input_barrier()
-  debugPrint("ENABLE barrier")
-  --assert(M.context.barrier_ns == nil, "Input barrier has already enabled.")
+  --debugPrint("ENABLE barrier")
   if M.context.barrier_ns ~= nil then
     disable_input_barrier()
   end
@@ -162,6 +176,9 @@ function M.input_keys_with_input_barrier(keys)
   if (mode_info == "v" or mode_info == "n" or mode_info == "i") then
     -- normalモードではinput barrierに起因する問題を確実に回避するため、normal!コマンドを使う
     if mode_info == "n" or mode_info == "v" then
+      -- normal!コマンドでもon_keyは突破できないので強制的に切る
+      -- この直後にコールバックで登録し直せば問題ない
+      vim.on_key(nil, M.context.ns)
       vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
       --M.input_keys(keys)
     elseif mode_info == "i" then
@@ -212,7 +229,7 @@ function M.build_submode(submode_metadata, submode_keymaps)
   end
 
   return {
-    timeoutlen = vim.o.timeoutlen,
+    timeoutlen = submode_metadata.timeoutlen or vim.o.timeoutlen,
     default = function()
 
     end,
@@ -285,7 +302,7 @@ decideAction = function(mode, buf, c, any_substitutes, submode_count)
       return rhs_callback, "", search_lhs, {}, true
     end
   elseif cm == false and pm >= 1 then
-    debugPrint("Waiting...:" .. search_lhs)
+    print("Waiting...:" .. search_lhs)
 
     return nil, "", search_lhs, any_substitutes, false
   end
@@ -378,7 +395,7 @@ function M.enable(mode, init_buf)
         debugPrint("DISGARD:", k)
         vim.schedule(
           function()
-            -- disable_input_barrier()
+            disable_input_barrier()
             vim.on_key(callback, ns)
           end
         )
@@ -394,12 +411,11 @@ function M.enable(mode, init_buf)
         num_queue:setBack(current_end_of_num_queue .. typed)
         debugPrint("Next:", num_queue:getBack())
         vim.schedule(function()
-          -- disable_input_barrier()
+          disable_input_barrier()
           vim.on_key(callback, ns)
         end)
         return ""
       end
-      num_queue:show()
       -- レジスタに値がない場合のみ更新する
       if count_reg == nil then
         if is_submode_count then
@@ -414,8 +430,6 @@ function M.enable(mode, init_buf)
         end
       end
       debugPrint("NOT DISGARD", typed, k)
-      M.context.defer_cb = function()
-      end
       local ok, is_timer_start, rhs_callback
       ok, rhs_callback, _, buf, any_substitutes, is_timer_start =
           pcall(decideAction, mode, buf, typed, any_substitutes, count_reg)
@@ -432,30 +446,36 @@ function M.enable(mode, init_buf)
       end
       -- debugPrint(rhs_callback and rhs_callback() or nil, is_timer_start)
       local execute_action = function()
-        -- timer起動時にbufのリセットを省略したため、このタイミングで削除
-        buf = ""
-        --vim.schedule(function()
-        M.context.defer_cb = function() end
-        --end)
-
-        M.input_keys_with_input_barrier(rhs_callback and rhs_callback() or "")
+        if M.context.timeoutlen_timer ~= nil then
+          -- timer起動時にbufのリセットを省略したため、このタイミングで削除
+          buf = ""
+          M.context.timeoutlen_timer:stop()
+          M.context.timeoutlen_timer = nil
+        end
+        if (type(rhs_callback) == "function") then
+          M.input_keys_with_input_barrier(rhs_callback() or "")
+        end
       end
 
 
       if is_timer_start then
-        M.context.defer_cb = execute_action
         M.context.timeoutlen_timer = vim.defer_fn(function()
-          M.context.defer_cb()
+          disable_input_barrier()
+          execute_action()
+          vim.schedule(function()
+            disable_input_barrier()
+            vim.on_key(callback, ns)
+          end)
         end, mode.timeoutlen)
-        enable_input_barrier()
         vim.schedule(function()
+          disable_input_barrier()
           vim.on_key(callback, ns)
         end)
       else
         execute_action()
         vim.schedule(
           function()
-            -- disable_input_barrier()
+            disable_input_barrier()
             vim.on_key(callback, ns)
           end
         )
@@ -464,7 +484,9 @@ function M.enable(mode, init_buf)
     return ""
   end
 
-  vim.on_key(callback, ns)
+  vim.on_key(
+    callback, ns
+  )
   M.context.ns = ns
 end
 
@@ -478,10 +500,11 @@ function M.disable()
 end
 
 local sm_crazy_f = M.build_submode({
-  name = "CRAZY-F"
+  name = "CRAZY-F",
+  timeoutlen = 300
 }, crazy_f)
 vim.keymap.set('n', 'f', function()
-  M.enable(sm_crazy_f, 'f')
+  M.enable(sm_crazy_f,'f')
 end)
 
 
@@ -553,10 +576,6 @@ vim.keymap.set('n', ',', function()
   vim.notify(", is nop")
 end)
 
-vim.keymap.set('i', ';', function()
-  vim.cmd('normal! hjkl')
-end)
-vim.keymap.set('v', ';', function()
-  vim.cmd('normal! k')
-end)
 return M
+
+
