@@ -23,6 +23,22 @@ local crazy_f = {
     }
   },
   {
+    'a',
+    function(_, _, _)
+      print("notify:a")
+      vim.notify("notify:a")
+      --return "<ignore>a"
+    end
+  },
+  {
+    'aa',
+    function(_, _, _)
+      print("notify:aaa")
+      vim.notify("notify:aa")
+      --return "<ignore>aa"
+    end
+  },
+  {
     'g<any><any><any>',
     function(count, keys, anys)
       vim.print(M.replace_any(keys, anys))
@@ -71,7 +87,11 @@ M.context = {
   -- namespace for input barrier
   barrier_ns = nil,
 
+  timeoutlen_timer = nil,
 
+  defer_cb = function()
+
+  end
 }
 
 
@@ -185,6 +205,9 @@ function M.build_submode(submode_metadata, submode_keymaps)
   local name = submode_metadata.name
   assert(name ~= "_internal_input_barrier", "This submode name is used intenal. Please rename.")
   for _, sm_keymap in ipairs(submode_keymaps) do
+    assert(#sm_keymap >= 2, "Each submode keymap has 2 or 3 element")
+    assert(type(sm_keymap[1]) == "string", "Keymap LHS must be string")
+    assert(type(sm_keymap[2]) == "string" or type(sm_keymap[2]) == "function", "Keymap RHS must be string or function")
     keymap_trie:insert(M.regularize_key_input(sm_keymap[1]), sm_keymap[2])
   end
 
@@ -206,7 +229,7 @@ local decideAction
 --- @param c string typed char but can include "<any>"
 --- @param any_substitutes table|nil それぞれの<any>として何が入力されかを表現するリスト
 --- @param submode_count number same as v:count, which represents number modification to keymap.
---- @return string rhs rhsとして実際に入力されるキー列。rhsのactionが関数の場合はその関数の返り値。actionを実行しない場合にはnvimのバグを回避するために空文字列を送信する
+--- @return function|nil rhs_callback rhsとして実際に入力されるキー列を返す関数。rhsのactionが関数の場合はその関数を実行する。
 --- @return string|nil on_key_ret on_key関数の返り値として用いる。nilのときcが基底モードに対してpassthroughされる。nilの場合は遮断(基底モードにcが入力されない)
 --- @return string next_buf The next state of the typed buffer queue
 --- @return table next_any_substitutes any_substitutesの次の状態
@@ -222,18 +245,18 @@ decideAction = function(mode, buf, c, any_substitutes, submode_count)
   if (submode_count ~= SUBMODE_COUNT_DISABLE and is_number_str(c)) then
     -- キー入力の途中で数字を打ったことになるが、この操作はカウントが有効な場合は許可されていないので、問答無用でマッチング失敗
     debugPrint("Number is not interpreted as key if submode enable.")
-    return "", nil, "", {}, false
+    return nil, nil, "", {}, false
   end
   if pm == 0 then
     if c == "<any>" then
       debugPrint("no lhs exists")
-      return "", nil, "", {}, false
+      return nil, nil, "", {}, false
     else
       -- "<any>"で再検索
       table.insert(any_substitutes, c)
       return decideAction(mode, buf, "<any>", any_substitutes, submode_count)
     end
-  elseif cm == true and pm == 1 then
+  elseif cm == true and pm >= 1 then
     -- 完全一致のみ。特定のrhsに確定
     local leaf = trie:getLeaf(search_lhs)
 
@@ -242,8 +265,7 @@ decideAction = function(mode, buf, c, any_substitutes, submode_count)
     assert(leaf.value ~= nil)
 
     local action = leaf.value
-    local rhs = ""
-    local rhc_callback = function()
+    local rhs_callback = function()
       local rhs = ""
       if (type(action) == "string") then
         if (submode_count > 0) then
@@ -255,29 +277,20 @@ decideAction = function(mode, buf, c, any_substitutes, submode_count)
       elseif type(action) == "function" then
         rhs = action(submode_count, search_lhs, any_substitutes)
       end
-      return rhs
+      return rhs or ""
     end
-    if (type(action) == "string") then
-      if (submode_count > 0) then
-        -- submode_count回、キーマッピングを繰り返す
-        rhs = action:rep(submode_count)
-      else
-        rhs = action
-      end
-    elseif type(action) == "function" then
-      rhs = action(submode_count, search_lhs, any_substitutes)
+    if pm == 1 then
+      return rhs_callback, "", "", {}, false
+    else -- pm>1
+      return rhs_callback, "", search_lhs, {}, true
     end
-    assert(type(rhs) == "string", "Action function must return string! or rhs must be string.")
-    return rhs, "", "", {}, false
-  elseif cm == true and pm > 1 then
-    assert(false, "timeoutlenを使って分岐する動作を実装する")
   elseif cm == false and pm >= 1 then
     debugPrint("Waiting...:" .. search_lhs)
 
-    return "", "", search_lhs, any_substitutes, false
+    return nil, "", search_lhs, any_substitutes, false
   end
   assert(false, "Logic Error")
-  return "", "", "", {}, false
+  return nil, "", "", {}, false
 end
 
 
@@ -344,7 +357,6 @@ function M.enable(mode, init_buf)
     t = is_t_empty and prev_t or t
     prev_t = t
 
-    local ret, rhs
     debugPrint(buf .. typed, "<-", typed)
     -- stop key waiting
 
@@ -366,7 +378,7 @@ function M.enable(mode, init_buf)
         debugPrint("DISGARD:", k)
         vim.schedule(
           function()
-            disable_input_barrier()
+            -- disable_input_barrier()
             vim.on_key(callback, ns)
           end
         )
@@ -382,7 +394,7 @@ function M.enable(mode, init_buf)
         num_queue:setBack(current_end_of_num_queue .. typed)
         debugPrint("Next:", num_queue:getBack())
         vim.schedule(function()
-          disable_input_barrier()
+          -- disable_input_barrier()
           vim.on_key(callback, ns)
         end)
         return ""
@@ -402,11 +414,15 @@ function M.enable(mode, init_buf)
         end
       end
       debugPrint("NOT DISGARD", typed, k)
-      local ok
-      ok, rhs, ret, buf, any_substitutes = pcall(decideAction, mode, buf, typed, any_substitutes, count_reg)
+      M.context.defer_cb = function()
+      end
+      local ok, is_timer_start, rhs_callback
+      ok, rhs_callback, _, buf, any_substitutes, is_timer_start =
+          pcall(decideAction, mode, buf, typed, any_substitutes, count_reg)
       if (not ok) then
         disable_input_barrier()
-        vim.notify("ERROR: " .. rhs, vim.log.levels.ERROR)
+        -- Since rhs_callback is error messeage, rhs_callback must be string here
+        vim.notify("ERROR: " .. rhs_callback, vim.log.levels.ERROR)
         return
       end
 
@@ -414,17 +430,37 @@ function M.enable(mode, init_buf)
         -- 実際にキーマップが実行されるか、キーマップがキャンセルされた場合のみレジスタをリセットする
         count_reg = nil
       end
-      M.input_keys_with_input_barrier(rhs)
-      vim.schedule(
-        function()
-          disable_input_barrier()
+      -- debugPrint(rhs_callback and rhs_callback() or nil, is_timer_start)
+      local execute_action = function()
+        -- timer起動時にbufのリセットを省略したため、このタイミングで削除
+        buf = ""
+        --vim.schedule(function()
+        M.context.defer_cb = function() end
+        --end)
+
+        M.input_keys_with_input_barrier(rhs_callback and rhs_callback() or "")
+      end
+
+
+      if is_timer_start then
+        M.context.defer_cb = execute_action
+        M.context.timeoutlen_timer = vim.defer_fn(function()
+          M.context.defer_cb()
+        end, mode.timeoutlen)
+        enable_input_barrier()
+        vim.schedule(function()
           vim.on_key(callback, ns)
-        end
-      )
-      -- return ret
+        end)
+      else
+        execute_action()
+        vim.schedule(
+          function()
+            -- disable_input_barrier()
+            vim.on_key(callback, ns)
+          end
+        )
+      end
     end
-    -- TODO: Switch passthrough input
-    --return ret
     return ""
   end
 
@@ -447,11 +483,6 @@ local sm_crazy_f = M.build_submode({
 vim.keymap.set('n', 'f', function()
   M.enable(sm_crazy_f, 'f')
 end)
--- M.enable(sm_crazy_f)
-vim.keymap.set('i', 'f', function()
-  M.enable(sm_crazy_f, 'f')
-end)
-
 
 
 -- コマンドラインモード (c) で <C-y> (Ctrl+Y) を押した時の動作を設定
