@@ -15,3 +15,4 @@ nvim-submode allows you to add an infinite number of modes to your Neovim.
 
 ## License
 MIT License
+See the [LICENSE](./LICENSE) file.
