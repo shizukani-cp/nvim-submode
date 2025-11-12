@@ -10,91 +10,7 @@ end
 local SUBMODE_COUNT_DISABLE = -1
 
 local M = {}
-local crazy_f = {
-  {
-    'f<any>',
-    function(_, keys, anys)
-      print("f<any>")
-      --
-      return M.replace_any(keys, anys)
-    end,
-    {
-      desc = 'same as f in normal mode',
-    }
-  },
-  {
-    'a',
-    function(_, _, _)
-      print("notify:a")
-      vim.notify("notify:a")
-      return 'j'
-      --return "<ignore>a"
-    end
-  },
-  {
-    'aa',
-    function(_, _, _)
-      print("notify:aaa")
-      vim.notify("notify:aa")
-      --return "<ignore>aa"
-    end
-  },
-  {
-    'g<any><any><any>',
-    function(count, keys, anys)
-      vim.notify(tostring(count) .. M.replace_any(keys, anys))
-      --return "gggg" .. tostring(count)
-    end,
-    {
-      desc = 'same as f in normal mode',
-    }
-  },
-  {
-    ',',
-    ',',
-    {
-      desc = 'same as , in normal mode',
-    }
-  },
-  {
-    ';',
-    ';',
-    {
-      desc = 'same as ; in normal mode',
-    }
-  },
-  {
-    'f',
-    ';',
-    {
-      desc = 'same as , in normal mode',
-    }
-  },
-  {
-    'F',
-    ',',
-    {
-      desc = 'same as ; in normal mode',
-    }
-  },
-}
 
-local clever_f = {
-  {
-    'f',
-    ';',
-  },
-  {
-    'F',
-    ','
-  },
-  {
-    'f<any>',
-    function(_, _, arg_keys)
-      return 'f' .. arg_keys
-    end,
-  }
-}
 
 
 function M.reset_context()
@@ -176,9 +92,7 @@ local function enable_input_barrier()
     disable_input_barrier()
   end
   M.context.barrier_ns = vim.api.nvim_create_namespace("nvim-submode._internal_input_barrier")
-  vim.on_key(function(key, typed)
-    -- debugPrint("barrier >> k:" .. vim.fn.keytrans(key) .. " t:" .. vim.fn.keytrans(typed))
-    -- refuse all keyinput
+  vim.on_key(function(_, _)
     return ""
   end, M.context.barrier_ns)
 end
@@ -269,7 +183,7 @@ function M.build_submode(submode_metadata, submode_keymaps)
     keymap_trie = keymap_trie,
     name = submode_metadata.name,
     display_name = submode_metadata.display_name or submode_metadata.name,
-    color = submode_metadata.color or "#222222"
+    color = submode_metadata.color or "#999999"
   }
 end
 
@@ -538,93 +452,5 @@ function M.disable()
   end
   M.context = M.reset_context()
 end
-
-local sm_crazy_f = M.build_submode({
-  name = "CRAZY-F",
-  timeoutlen = 300,
-  after_enter = function()
-    vim.schedule(function()
-      require("lualine").refresh()
-    end)
-  end,
-  after_leave = function()
-    vim.schedule(function()
-      require("lualine").refresh()
-    end)
-    vim.notify("EXIT CRAZY-F")
-  end
-}, crazy_f)
-vim.keymap.set('n', 'f', function()
-  M.enable(sm_crazy_f, 'f')
-end)
-
-
--- コマンドラインモード (c) で <C-y> (Ctrl+Y) を押した時の動作を設定
-vim.keymap.set('c', '<C-y>', function()
-  vim.cmd("normal! :echo")
-end, { desc = "Process command line" })
--- M.enable(sm_crazy_f)
-
-local fizzbuzz = {
-  {
-    'f',
-    function(count, _, _)
-      assert(type(count) == "number", "count must be number.")
-      if (type(count) ~= "number") then
-        return "ERROR:" .. type(count)
-      end
-      count = count > 0 and count or 1
-      local fb = ""
-      for i = 1, count, 1 do
-        if i % 15 == 0 then
-          fb = fb .. 'FizzBuzz' .. '\n'
-        elseif i % 3 == 0 then
-          fb = fb .. 'Fizz' .. '\n'
-        elseif i % 5 == 0 then
-          fb = fb .. 'Buzz' .. '\n'
-        else
-          fb = fb .. tostring(i) .. '\n'
-        end
-      end
-
-      return fb
-    end
-  }
-}
-
-
-vim.keymap.set('i', '*', function()
-  M.enable(M.build_submode({
-    name = "FIZZBUZZ"
-  }, fizzbuzz))
-end)
-
-local window_sm_map = {
-  {
-    '+',
-    '<C-W>>',
-    {}
-  },
-  {
-    '-',
-    '<C-W><',
-    {}
-  }
-}
-
-vim.keymap.set('n', 'www', function()
-  M.enable(M.build_submode({
-    name = "WINDOW"
-  }, window_sm_map))
-end)
-
-
-
-vim.keymap.set('n', ';', function()
-  vim.notify("; is nop")
-end)
-vim.keymap.set('n', ',', function()
-  vim.notify(", is nop")
-end)
 
 return M
