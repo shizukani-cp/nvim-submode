@@ -1,6 +1,6 @@
 local Trie = require("lua.nvim-submode.trie")
 local Queue = require("lua.nvim-submode.queue")
-local DEBUG = true
+local DEBUG = false
 local function debugPrint(...)
   if DEBUG == true then
     print(...)
@@ -31,6 +31,14 @@ end
 
 M.context = M.reset_context()
 M.after_leave = function() end
+
+
+local function get_mode_char()
+  local current_mode = vim.api.nvim_get_mode()["mode"]
+  local mode_info = current_mode:sub(1, 1)
+  mode_info = mode_info == "V" and "v" or mode_info
+  return mode_info
+end
 
 local function infoPrint(...)
   if M.context.show_info then
@@ -105,15 +113,6 @@ local function enable_input_barrier()
   vim.on_key(function(_, _)
     return ""
   end, M.context.barrier_ns)
-end
-
-
-
-local function get_mode_char()
-  local current_mode = vim.api.nvim_get_mode()["mode"]
-  local mode_info = current_mode:sub(1, 1)
-  mode_info = mode_info == "V" and "v" or mode_info
-  return mode_info
 end
 
 function M.input_keys_with_input_barrier(keys)
