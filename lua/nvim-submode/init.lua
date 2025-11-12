@@ -1,6 +1,6 @@
 local Trie = require("lua.nvim-submode.trie")
 local Queue = require("lua.nvim-submode.queue")
-local DEBUG = false
+local DEBUG = true
 local function debugPrint(...)
   if DEBUG == true then
     print(...)
@@ -85,6 +85,12 @@ function M.replace_any(keys, anys)
   return keys
 end
 
+
+-- 本来input_barrierは不要だが、現在のon_keyでは<cmd>/K_LUAのときに後続のキーを受け取る方法がない
+-- そこで、実際に入力するべきキーを第一層のon_keyで確定させた後、
+-- その処理の前後でinput_barrierを起動し、不要な入力をinput_barrierにぶつけて強引に破棄する
+-- vim.scheduleを呼ぶと、input_barrierによる破棄が完了するまで飛べるので、
+-- うまくいく?
 local function disable_input_barrier()
   --debugPrint("DISABLE barrier")
   vim.on_key(nil, M.context.barrier_ns)
@@ -123,14 +129,22 @@ function M.input_keys_with_input_barrier(keys)
       -- normal!コマンドでもon_keyは突破できないので強制的に切る
       -- この直後にコールバックで登録し直せば問題ない
       vim.on_key(nil, M.context.ns)
-      vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
+      disable_input_barrier()
+      --vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
       --M.input_keys(keys)
+      vim.api.nvim_feedkeys(keys, "L", false)
     elseif mode_info == "i" then
       if keys == "" then
         return
       end
-      -- バリアを避けるためにペーストする
-      vim.api.nvim_paste(keys, false, -1)
+      vim.on_key(nil, M.context.ns)
+      --disable_input_barrier()
+      -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
+      -- 余計なキー入力が破棄されるまで待つためにscheduleを呼ぶ
+      vim.schedule(function()
+        disable_input_barrier()
+        vim.api.nvim_input(keys)
+      end)
     end
     return
   else
