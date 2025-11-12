@@ -85,7 +85,6 @@ function M.replace_any(keys, anys)
   return keys
 end
 
-
 -- 本来input_barrierは不要だが、現在のon_keyでは<cmd>/K_LUAのときに後続のキーを受け取る方法がない
 -- そこで、実際に入力するべきキーを第一層のon_keyで確定させた後、
 -- その処理の前後でinput_barrierを起動し、不要な入力をinput_barrierにぶつけて強引に破棄する
@@ -129,10 +128,10 @@ function M.input_keys_with_input_barrier(keys)
       -- normal!コマンドでもon_keyは突破できないので強制的に切る
       -- この直後にコールバックで登録し直せば問題ない
       vim.on_key(nil, M.context.ns)
-      disable_input_barrier()
-      --vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
-      --M.input_keys(keys)
-      vim.api.nvim_feedkeys(keys, "L", false)
+      -- 理由はわからないが、normalのときはinputと同じアプローチは取れない
+      -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
+      vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
+
     elseif mode_info == "i" then
       if keys == "" then
         return
@@ -313,6 +312,10 @@ function M.enable(mode, init_buf)
   local num_queue = Queue:new()
   -- 現在判定中のキーマッピングに対して適用予定のcount, -1であるときカウント機能が無効であることを示す
   local count_reg = nil
+  local reset_typeahead_buf = function()
+    buf = ""
+    count_reg = nil
+  end
   callback = function(k, t)
     local typed = vim.fn.keytrans(t)
     debugPrint("k:" .. vim.fn.keytrans(k) .. " t:" .. vim.fn.keytrans(t))
@@ -395,13 +398,13 @@ function M.enable(mode, init_buf)
 
       if buf == "" then
         -- 実際にキーマップが実行されるか、キーマップがキャンセルされた場合のみレジスタをリセットする
-        count_reg = nil
+        reset_typeahead_buf()
       end
       -- debugPrint(rhs_callback and rhs_callback() or nil, is_timer_start)
       local execute_action = function()
         if M.context.timeoutlen_timer ~= nil then
           -- timer起動時にbufのリセットを省略したため、このタイミングで削除
-          buf = ""
+          reset_typeahead_buf()
           M.context.timeoutlen_timer:stop()
           M.context.timeoutlen_timer = nil
         end
