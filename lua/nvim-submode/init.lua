@@ -65,10 +65,7 @@ local crazy_f = {
   },
   {
     'f',
-    function()
-      vim.notify("SEND:;")
-      return ';'
-    end,
+    ';',
     {
       desc = 'same as , in normal mode',
     }
@@ -81,7 +78,7 @@ local crazy_f = {
     }
   },
 }
---- hjjjjhjjjjjjhjjjjjhjjjjhjjjjhhjjjj
+
 local clever_f = {
   {
     'f',
@@ -99,24 +96,52 @@ local clever_f = {
   }
 }
 
-M.context = {
-  -- namespace
-  ns = nil,
-  -- namespace for input barrier
-  barrier_ns = nil,
 
-  timeoutlen_timer = nil,
+function M.reset_context()
+  return {
+    -- namespace
+    ns = nil,
+    -- namespace for input barrier
+    barrier_ns = nil,
 
-}
+    timeoutlen_timer = nil,
 
+    name = nil,
+    display_name = nil,
+    color = nil,
+    state = nil,
+
+  }
+end
+
+M.context = M.reset_context()
+M.after_leave = function() end
 
 function M.regularize_key_input(input)
   local regularized = vim.fn.keytrans(vim.api.nvim_replace_termcodes(input, true, true, true))
   return regularized:gsub("<lt>any>", "<any>"):gsub("<lt>Any>", "<any>")
 end
 
+function M.get_submode_name()
+  return M.context.display_name or nil
+end
+
+function M.get_submode_color()
+  return M.context.color or nil
+end
+
 local function is_number_str(c)
   return tonumber(c) ~= nil
+end
+
+function M.countable(action)
+  return function(count, keys, anys)
+    local res
+    for _ = 1, count, 1 do
+      res = action(count, keys, anys)
+    end
+    return res
+  end
 end
 
 ---たとえキー入力を行わない場合であっても、nvimのバグを回避するために空文字列でこの関数を呼び出さなければならない
@@ -201,8 +226,12 @@ end
 --- @class Submoode
 --- @field timeoutlen integer
 --- @field default function
+--- @field after_enter function
+--- @field after_leave function
 --- @field keymap_trie Trie
 --- @field name string
+--- @field display_name string
+--- @field color string
 
 
 --- @class SubmodeMetadata
@@ -211,6 +240,7 @@ end
 --- @field after_enter function|nil A callback that is triggered after the sub-mode is enabled.
 --- @field after_leave function|nil A callback that is triggered after the submode is disable.
 --- @field timeoutlen number|nil The waiting time before ending the partial match waiting period and executing the exact match, when both exact and partial key mappings exist. Same as g:timeoutlen
+--- @field color string|nil
 
 
 ---Build submode instance from SubmodeMetadata and submode keymaps.
@@ -219,6 +249,7 @@ end
 ---@return Submoode
 function M.build_submode(submode_metadata, submode_keymaps)
   local keymap_trie = Trie:new()
+  assert(type(submode_metadata.name) == "string", "submode name is not given!")
   local name = submode_metadata.name
   assert(name ~= "_internal_input_barrier", "This submode name is used intenal. Please rename.")
   for _, sm_keymap in ipairs(submode_keymaps) do
@@ -233,12 +264,16 @@ function M.build_submode(submode_metadata, submode_keymaps)
     default = function()
 
     end,
+    after_enter = submode_metadata.after_enter or function() end,
+    after_leave = submode_metadata.after_leave or function() end,
     keymap_trie = keymap_trie,
-    name = name
+    name = submode_metadata.name,
+    display_name = submode_metadata.display_name or submode_metadata.name,
+    color = submode_metadata.color or "#222222"
   }
 end
 
-local decideAction
+local decide_action
 
 --- Actionを決定する純粋関数
 --- @param mode Submoode
@@ -251,7 +286,7 @@ local decideAction
 --- @return string next_buf The next state of the typed buffer queue
 --- @return table next_any_substitutes any_substitutesの次の状態
 --- @return boolean timer_start timerを起動するかどうかを表す。曖昧なキー入力時に使われる
-decideAction = function(mode, buf, c, any_substitutes, submode_count)
+decide_action = function(mode, buf, c, any_substitutes, submode_count)
   any_substitutes = any_substitutes or {}
   local trie = mode.keymap_trie
   -- 検索用のlhs。<any>を含む
@@ -271,7 +306,7 @@ decideAction = function(mode, buf, c, any_substitutes, submode_count)
     else
       -- "<any>"で再検索
       table.insert(any_substitutes, c)
-      return decideAction(mode, buf, "<any>", any_substitutes, submode_count)
+      return decide_action(mode, buf, "<any>", any_substitutes, submode_count)
     end
   elseif cm == true and pm >= 1 then
     -- 完全一致のみ。特定のrhsに確定
@@ -342,7 +377,11 @@ end
 function M.enable(mode, init_buf)
   local ns = vim.api.nvim_create_namespace("nvim-submode." .. mode.name)
   M.restore_statusline = init_submode(mode.name)
-
+  M.context.name = mode.name
+  M.context.display_name = mode.display_name
+  M.context.color = mode.color
+  mode.after_enter()
+  M.after_leave = mode.after_leave
 
   vim.notify("Submode: " .. mode.name)
   -- typed buffer
@@ -381,11 +420,12 @@ function M.enable(mode, init_buf)
       -- If there are keybindings associated with <Esc>,
       -- it's necessary to wait until the consumption of their right-hand sides is complete before exiting the submode,
       -- so we use vim.schedule to wait until the processing is finished.
-      vim.notify("EXIT")
+      -- vim.notify("EXIT")
       M.restore_statusline()
       vim.schedule(function()
         M.disable()
-        disable_input_barrier()
+        M.after_leave()
+        M.after_leave = function() end
       end)
       return ""
     else
@@ -432,7 +472,7 @@ function M.enable(mode, init_buf)
       debugPrint("NOT DISGARD", typed, k)
       local ok, is_timer_start, rhs_callback
       ok, rhs_callback, _, buf, any_substitutes, is_timer_start =
-          pcall(decideAction, mode, buf, typed, any_substitutes, count_reg)
+          pcall(decide_action, mode, buf, typed, any_substitutes, count_reg)
       if (not ok) then
         disable_input_barrier()
         -- Since rhs_callback is error messeage, rhs_callback must be string here
@@ -491,20 +531,31 @@ function M.enable(mode, init_buf)
 end
 
 function M.disable()
-  if M.context.ns == nil then
-    return
-  else
+  disable_input_barrier()
+  if M.context.ns ~= nil then
     vim.on_key(nil, M.context.ns)
     M.context.ns = nil
   end
+  M.context = M.reset_context()
 end
 
 local sm_crazy_f = M.build_submode({
   name = "CRAZY-F",
-  timeoutlen = 300
+  timeoutlen = 300,
+  after_enter = function()
+    vim.schedule(function()
+      require("lualine").refresh()
+    end)
+  end,
+  after_leave = function()
+    vim.schedule(function()
+      require("lualine").refresh()
+    end)
+    vim.notify("EXIT CRAZY-F")
+  end
 }, crazy_f)
 vim.keymap.set('n', 'f', function()
-  M.enable(sm_crazy_f,'f')
+  M.enable(sm_crazy_f, 'f')
 end)
 
 
@@ -577,5 +628,3 @@ vim.keymap.set('n', ',', function()
 end)
 
 return M
-
-
