@@ -1,6 +1,6 @@
 local Trie = require("lua.nvim-submode.trie")
 local Queue = require("lua.nvim-submode.queue")
-local DEBUG = true
+local DEBUG = false
 local function debugPrint(...)
   if DEBUG == true then
     print(...)
@@ -10,7 +10,6 @@ end
 local SUBMODE_COUNT_DISABLE = -1
 
 local M = {}
-
 
 
 function M.reset_context()
@@ -26,12 +25,18 @@ function M.reset_context()
     display_name = nil,
     color = nil,
     state = nil,
-
+    show_info = true,
   }
 end
 
 M.context = M.reset_context()
 M.after_leave = function() end
+
+local function infoPrint(...)
+  if M.context.show_info then
+    print(...)
+  end
+end
 
 function M.regularize_key_input(input)
   local regularized = vim.fn.keytrans(vim.api.nvim_replace_termcodes(input, true, true, true))
@@ -146,6 +151,8 @@ end
 --- @field name string
 --- @field display_name string
 --- @field color string
+--- @field show_info boolean
+--- @field is_count_enable boolean
 
 
 --- @class SubmodeMetadata
@@ -155,6 +162,8 @@ end
 --- @field after_leave function|nil A callback that is triggered after the submode is disable.
 --- @field timeoutlen number|nil The waiting time before ending the partial match waiting period and executing the exact match, when both exact and partial key mappings exist. Same as g:timeoutlen
 --- @field color string|nil
+--- @field show_info boolean|nil
+--- @field is_count_enable boolean|nil
 
 
 ---Build submode instance from SubmodeMetadata and submode keymaps.
@@ -183,7 +192,9 @@ function M.build_submode(submode_metadata, submode_keymaps)
     keymap_trie = keymap_trie,
     name = submode_metadata.name,
     display_name = submode_metadata.display_name or submode_metadata.name,
-    color = submode_metadata.color or "#999999"
+    color = submode_metadata.color or "#999999",
+    show_info = submode_metadata.show_info or true,
+    is_count_enable = submode_metadata.is_count_enable or true
   }
 end
 
@@ -210,7 +221,7 @@ decide_action = function(mode, buf, c, any_substitutes, submode_count)
   local pm = trie:countStartsWith(search_lhs)
   if (submode_count ~= SUBMODE_COUNT_DISABLE and is_number_str(c)) then
     -- キー入力の途中で数字を打ったことになるが、この操作はカウントが有効な場合は許可されていないので、問答無用でマッチング失敗
-    debugPrint("Number is not interpreted as key if submode enable.")
+    infoPrint("Number is not interpreted as key if submode enable.")
     return nil, nil, "", {}, false
   end
   if pm == 0 then
@@ -251,7 +262,7 @@ decide_action = function(mode, buf, c, any_substitutes, submode_count)
       return rhs_callback, "", search_lhs, {}, true
     end
   elseif cm == false and pm >= 1 then
-    print("Waiting...:" .. search_lhs)
+    infoPrint("Waiting...:" .. search_lhs)
 
     return nil, "", search_lhs, any_substitutes, false
   end
@@ -261,39 +272,15 @@ end
 
 
 
-local function init_submode(modename)
-  -- 現在のstatuslineの内容を保存する関数
-  -- 1. 現在のstatuslineの内容を取得し、変数に保存
-  local original_statusline = vim.o.statusline
-
-  -- 2. 新しいテキストでstatuslineを書き換え
-  -- %#StatusLine#はハイライトグループで、デフォルトのstatuslineのスタイルを適用します。
-  vim.o.statusline = '%#StatusLine# ' .. modename .. ' '
-
-  -- 3. statuslineを再描画
-  vim.schedule(function()
-    vim.cmd('redrawstatus')
-  end)
-
-
-  -- 4. statuslineを元に戻す関数を返す
-  return function()
-    -- 元のstatuslineの内容を復元
-    vim.o.statusline = original_statusline
-
-    -- statuslineを再描画
-    vim.cmd('redrawstatus')
-  end
-end
-
 --- @param mode Submoode
 --- @param init_buf string|nil initialized value of buffer
 function M.enable(mode, init_buf)
   local ns = vim.api.nvim_create_namespace("nvim-submode." .. mode.name)
-  M.restore_statusline = init_submode(mode.name)
   M.context.name = mode.name
   M.context.display_name = mode.display_name
   M.context.color = mode.color
+  local is_submode_count = mode.is_count_enable
+
   mode.after_enter()
   M.after_leave = mode.after_leave
 
@@ -306,7 +293,6 @@ function M.enable(mode, init_buf)
       M.input_keys("")
     end)
   end
-  local is_submode_count = true
   local callback
   local any_substitutes = {}
   local prev_t = ""
@@ -335,7 +321,6 @@ function M.enable(mode, init_buf)
       -- it's necessary to wait until the consumption of their right-hand sides is complete before exiting the submode,
       -- so we use vim.schedule to wait until the processing is finished.
       -- vim.notify("EXIT")
-      M.restore_statusline()
       vim.schedule(function()
         M.disable()
         M.after_leave()
@@ -363,7 +348,7 @@ function M.enable(mode, init_buf)
         debugPrint("count:", num_queue:getBack())
         debugPrint("length:", num_queue:size())
         num_queue:setBack(current_end_of_num_queue .. typed)
-        debugPrint("Next:", num_queue:getBack())
+        infoPrint("Count:", num_queue:getBack())
         vim.schedule(function()
           disable_input_barrier()
           vim.on_key(callback, ns)
