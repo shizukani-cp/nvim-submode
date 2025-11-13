@@ -202,8 +202,8 @@ function M.build_submode(submode_metadata, submode_keymaps)
     name = submode_metadata.name,
     display_name = submode_metadata.display_name or submode_metadata.name,
     color = submode_metadata.color or "#999999",
-    show_info = submode_metadata.show_info or true,
-    is_count_enable = submode_metadata.is_count_enable or true
+    show_info = submode_metadata.show_info == nil and true or submode_metadata.show_info,
+    is_count_enable = submode_metadata.is_count_enable == nil and true or submode_metadata.is_count_enable
   }
 end
 
@@ -253,6 +253,7 @@ decide_action = function(mode, buf, c, any_substitutes, submode_count)
     local action = leaf.value
     local rhs_callback = function()
       local rhs = ""
+      local exit = false
       if (type(action) == "string") then
         if (submode_count > 0) then
           -- submode_count回、キーマッピングを繰り返す
@@ -261,9 +262,9 @@ decide_action = function(mode, buf, c, any_substitutes, submode_count)
           rhs = action
         end
       elseif type(action) == "function" then
-        rhs = action(submode_count, search_lhs, any_substitutes)
+        rhs, exit = action(submode_count, search_lhs, any_substitutes)
       end
-      return rhs or ""
+      return rhs or "", exit
     end
     if pm == 1 then
       return rhs_callback, "", "", {}, false
@@ -288,7 +289,7 @@ function M.enable(mode, init_buf)
   M.context.name = mode.name
   M.context.display_name = mode.display_name
   M.context.color = mode.color
-  local is_submode_count = mode.is_count_enable
+  local is_count_enable = mode.is_count_enable
 
   mode.after_enter()
   M.after_leave = mode.after_leave
@@ -353,7 +354,7 @@ function M.enable(mode, init_buf)
       end
 
       -- count_regがnilではないということは何かしらを入力途中であることを意味する
-      if is_submode_count and is_number_str(typed) and count_reg == nil then
+      if is_count_enable and is_number_str(typed) and count_reg == nil then
         debugPrint("Before:", num_queue:getBack())
         local current_end_of_num_queue = num_queue:getBack()
         debugPrint("count:", num_queue:getBack())
@@ -368,7 +369,7 @@ function M.enable(mode, init_buf)
       end
       -- レジスタに値がない場合のみ更新する
       if count_reg == nil then
-        if is_submode_count then
+        if is_count_enable then
           if num_queue:isEmpty() then
             count_reg = 0
           else
@@ -402,18 +403,37 @@ function M.enable(mode, init_buf)
           M.context.timeoutlen_timer:stop()
           M.context.timeoutlen_timer = nil
         end
-        if (type(rhs_callback) == "function") then
-          local res = rhs_callback()
-          if (type(res) == "string" or type(res) == nil) then
-            M.input_keys_with_input_barrier(rhs_callback() or "")
-            return false
-          elseif type(res) == "number" then
-            assert(res == M.EXIT_SUBMODE,
-              "Return values from action functions other than string, nil, or M.EXIT_SUBMODE are not permitted.")
-            return true
-          end
-          assert(false, "LOGIC ERROR in execute_action")
+
+        if type(rhs_callback) ~= "function" then
+          vim.notify("LOGIC ERROR: rhs_callback is not function", vim.log.levels.ERROR)
           return true
+        end
+
+        local res, exit = rhs_callback()
+        -- 1. 戻り値resの型チェック（nilまたはstring以外はエラー）
+        if type(res) ~= "string" and type(res) ~= "nil" then
+          vim.notify("First return value from an action function must be string or nil.", vim.log.levels.ERROR)
+          return true
+        end
+
+        -- 2. 戻り値exitの型チェックと値の検証
+        local is_exit_number = (type(exit) == "number")
+
+        if is_exit_number and exit ~= M.EXIT_SUBMODE then
+          -- exitが数値だが M.EXIT_SUBMODE ではない場合はエラー
+          vim.notify(
+            "Second return value from an action function must be nil or M.EXIT_SUBMODE and others are not permitted.",
+            vim.log.levels.ERROR
+          )
+          return true
+        end
+
+        M.input_keys_with_input_barrier(res or "") -- resはstringまたはnilなので、nilの場合は空文字列を使用
+
+        if is_exit_number then
+          return true
+        else
+          return false
         end
       end
 
