@@ -46,31 +46,14 @@ local function infoPrint(...)
   end
 end
 
+
 function M.regularize_key_input(input)
   local regularized = vim.fn.keytrans(vim.api.nvim_replace_termcodes(input, true, true, true))
   return regularized:gsub("<lt>any>", "<any>"):gsub("<lt>Any>", "<any>")
 end
 
-function M.get_submode_name()
-  return M.context.display_name or nil
-end
-
-function M.get_submode_color()
-  return M.context.color or nil
-end
-
 local function is_number_str(c)
   return tonumber(c) ~= nil
-end
-
-function M.countable(action)
-  return function(count, keys, anys)
-    local res
-    for _ = 1, count, 1 do
-      res = action(count, keys, anys)
-    end
-    return res
-  end
 end
 
 ---たとえキー入力を行わない場合であっても、nvimのバグを回避するために空文字列でこの関数を呼び出さなければならない
@@ -115,6 +98,22 @@ local function enable_input_barrier()
   end, M.context.barrier_ns)
 end
 
+---Function to call on_key with pcall
+---@param on_key_callback function
+local function safe_on_key(on_key_callback, ns)
+  vim.on_key(function(key, typed)
+    local ok, res = pcall(on_key_callback, key, typed)
+    if ok then
+      return res
+    else
+      disable_input_barrier()
+      M.disable()
+      vim.notify(res, vim.log.levels.ERROR)
+      return ""
+    end
+  end, ns)
+end
+
 function M.input_keys_with_input_barrier(keys)
   if (type(keys) ~= "string" or keys == "") then
     return
@@ -130,13 +129,11 @@ function M.input_keys_with_input_barrier(keys)
       -- 理由はわからないが、normalのときはinputと同じアプローチは取れない
       -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
       vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
-
     elseif mode_info == "i" then
       if keys == "" then
         return
       end
       vim.on_key(nil, M.context.ns)
-      --disable_input_barrier()
       -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
       -- 余計なキー入力が破棄されるまで待つためにscheduleを呼ぶ
       vim.schedule(function()
@@ -296,7 +293,6 @@ function M.enable(mode, init_buf)
   mode.after_enter()
   M.after_leave = mode.after_leave
 
-  vim.notify("Submode: " .. mode.name)
   -- typed buffer
   local buf = init_buf or ""
   if (init_buf ~= nil) then
@@ -336,7 +332,6 @@ function M.enable(mode, init_buf)
       -- If there are keybindings associated with <Esc>,
       -- it's necessary to wait until the consumption of their right-hand sides is complete before exiting the submode,
       -- so we use vim.schedule to wait until the processing is finished.
-      -- vim.notify("EXIT")
       vim.schedule(function()
         M.disable()
         M.after_leave()
@@ -351,7 +346,7 @@ function M.enable(mode, init_buf)
         vim.schedule(
           function()
             disable_input_barrier()
-            vim.on_key(callback, ns)
+            safe_on_key(callback, ns)
           end
         )
         return ""
@@ -367,7 +362,7 @@ function M.enable(mode, init_buf)
         infoPrint("Count:", num_queue:getBack())
         vim.schedule(function()
           disable_input_barrier()
-          vim.on_key(callback, ns)
+          safe_on_key(callback, ns)
         end)
         return ""
       end
@@ -419,19 +414,19 @@ function M.enable(mode, init_buf)
           execute_action()
           vim.schedule(function()
             disable_input_barrier()
-            vim.on_key(callback, ns)
+            safe_on_key(callback, ns)
           end)
         end, mode.timeoutlen)
         vim.schedule(function()
           disable_input_barrier()
-          vim.on_key(callback, ns)
+          safe_on_key(callback, ns)
         end)
       else
         execute_action()
         vim.schedule(
           function()
             disable_input_barrier()
-            vim.on_key(callback, ns)
+            safe_on_key(callback, ns)
           end
         )
       end
@@ -439,7 +434,7 @@ function M.enable(mode, init_buf)
     return ""
   end
 
-  vim.on_key(
+  safe_on_key(
     callback, ns
   )
   M.context.ns = ns
@@ -452,6 +447,25 @@ function M.disable()
     M.context.ns = nil
   end
   M.context = M.reset_context()
+end
+
+-- Utility Functions
+function M.countable(action)
+  return function(count, keys, anys)
+    local res
+    for _ = 1, count, 1 do
+      res = action(count, keys, anys)
+    end
+    return res
+  end
+end
+
+function M.get_submode_name()
+  return M.context.display_name or nil
+end
+
+function M.get_submode_color()
+  return M.context.color or nil
 end
 
 return M

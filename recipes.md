@@ -1,0 +1,3 @@
+# RECIPES
+## CAPSLOCK submode
+
