@@ -62,7 +62,7 @@ function M.input_keys(keys)
   assert(type(keys) == "string", "keys must be string")
   -- This code must works! But dosen's since nvim has a bug!!!!
   -- vim.api.nvim_feedkeys(keys, "n", false)
-  vim.api.nvim_feedkeys(keys .. "\\<Ignore>", "ni", false)
+  vim.api.nvim_feedkeys(keys, "ni", false)
 end
 
 --- Substitute any to real typed keys. e.g. f<any><any> and you typed "fsa" then the function returns "fsa"
@@ -120,27 +120,26 @@ function M.input_keys_with_input_barrier(keys)
   end
   assert(type(keys) == "string", "keys must be string")
   local mode_info = get_mode_char()
-  if (mode_info == "v" or mode_info == "n" or mode_info == "i") then
-    -- normalモードではinput barrierに起因する問題を確実に回避するため、normal!コマンドを使う
-    if mode_info == "n" or mode_info == "v" then
-      -- normal!コマンドでもon_keyは突破できないので強制的に切る
-      -- この直後にコールバックで登録し直せば問題ない
-      vim.on_key(nil, M.context.ns)
-      -- 理由はわからないが、normalのときはinputと同じアプローチは取れない
-      -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
-      vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
-    elseif mode_info == "i" then
-      if keys == "" then
-        return
-      end
-      vim.on_key(nil, M.context.ns)
-      -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
-      -- 余計なキー入力が破棄されるまで待つためにscheduleを呼ぶ
-      vim.schedule(function()
-        disable_input_barrier()
-        vim.api.nvim_input(keys)
-      end)
+  -- normalモードではinput barrierに起因する問題を確実に回避するため、normal!コマンドを使う
+  if mode_info == "n" or mode_info == "v" then
+    -- normal!コマンドでもon_keyは突破できないので強制的に切る
+    -- この直後にコールバックで登録し直せば問題ない
+    vim.on_key(nil, M.context.ns)
+    -- 理由はわからないが、normalのときはinputと同じアプローチは取れない
+    -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
+    vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(keys, true, true, true) .. "")
+    return
+  elseif mode_info == "i" or mode_info == "c" then
+    if keys == "" then
+      return
     end
+    vim.on_key(nil, M.context.ns)
+    -- もともとはnvim_pasteを使っていたが、多分これが唯一上手くいく方法
+    -- 余計なキー入力が破棄されるまで待つためにscheduleを呼ぶ
+    vim.schedule(function()
+      disable_input_barrier()
+      vim.api.nvim_input(keys)
+    end)
     return
   else
     disable_input_barrier()
