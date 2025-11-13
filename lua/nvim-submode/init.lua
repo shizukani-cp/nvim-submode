@@ -514,4 +514,17 @@ function M.get_submode_color()
   return M.context.color or nil
 end
 
+---set submode state
+---@param state table the next state of submode
+function M.set_state(state)
+  assert(M.context.name~=nil,"set_state can only be used within a submode.")
+  M.context.state = state
+end
+
+---get submode state
+---@return table|nil curren_state the current state
+function M.get_state()
+  assert(M.context.name~=nil,"set_state can only be used within a submode.")
+  return M.context.state
+end
 return M

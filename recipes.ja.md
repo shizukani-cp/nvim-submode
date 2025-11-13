@@ -2,13 +2,14 @@
 ## CapsLockサブモード
 
 CapsLockサブモードではアルファベットがすべて大文字になります。insertモードでの利用を想定しているため、insertモードのキーマップを起動用に割り当ててください。
-`<any>`は任意の１文字のキーにマッチすることを意味します。
+`<any>`は任意の１文字のキーにマッチすることを意味します。このモードではカウント機能は不要であるため、オフにしてあります。action関数(サブモードのrhsに割り当てる関数)の1つ目の返り値では実際にnvimに送信される文字列を設定します。また、2つ目の返り値に`sm.EXIT_SUBMODE`を設定することでキーバインドを実行後にサブモードを終了できます。`<Esc>`を押すことでもサブモードを終了できます。この例ではサブモードのトリガーとして`<C-l>`を設定しています。
 
 ```lua
 local capslock_sm = sm.build_submode({
-  name="CAPSLOCK",
+  name = "CAPSLOCK",
   timeoutlen = 300,
-  color = "#999999",
+  color = "#999999", -- Or use any color scheme you like
+  is_count_enable = false,
   after_enter = function()
     vim.schedule(function()
       require("lualine").refresh()
@@ -20,18 +21,23 @@ local capslock_sm = sm.build_submode({
     end)
     vim.notify("EXIT CAPSLOCK")
   end
+}, {
+  {
+    '<any>',
+    function(count, keys, anys)
+      return string.upper(sm.replace_any(keys, anys))
+    end
   },
   {
-    {
-      '<any>',
-      function(count,keys,anys)
-        return string.upper(sm.replace_any(keys,anys))
-      end
-    }
+    '<C-l>',
+    function(_, _, _)
+      return "", sm.EXIT_SUBMODE
+    end
   }
-)
+})
 
-vim.keymap.set("i","<C-L>",function ()
+-- keymap
+vim.keymap.set('n', '<C-l>', function()
   sm.enable(capslock_sm)
 end)
 ```
