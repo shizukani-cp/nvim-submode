@@ -9,8 +9,9 @@ end
 
 local SUBMODE_COUNT_DISABLE = -1
 
-local M = {}
 
+local M = {}
+M.EXIT_SUBMODE = -2
 
 function M.reset_context()
   return {
@@ -393,7 +394,7 @@ function M.enable(mode, init_buf)
         -- 実際にキーマップが実行されるか、キーマップがキャンセルされた場合のみレジスタをリセットする
         reset_typeahead_buf()
       end
-      -- debugPrint(rhs_callback and rhs_callback() or nil, is_timer_start)
+
       local execute_action = function()
         if M.context.timeoutlen_timer ~= nil then
           -- timer起動時にbufのリセットを省略したため、このタイミングで削除
@@ -402,7 +403,17 @@ function M.enable(mode, init_buf)
           M.context.timeoutlen_timer = nil
         end
         if (type(rhs_callback) == "function") then
-          M.input_keys_with_input_barrier(rhs_callback() or "")
+          local res = rhs_callback()
+          if (type(res) == "string" or type(res) == nil) then
+            M.input_keys_with_input_barrier(rhs_callback() or "")
+            return false
+          elseif type(res) == "number" then
+            assert(res == M.EXIT_SUBMODE,
+              "Return values from action functions other than string, nil, or M.EXIT_SUBMODE are not permitted.")
+            return true
+          end
+          assert(false, "LOGIC ERROR in execute_action")
+          return true
         end
       end
 
@@ -410,7 +421,15 @@ function M.enable(mode, init_buf)
       if is_timer_start then
         M.context.timeoutlen_timer = vim.defer_fn(function()
           disable_input_barrier()
-          execute_action()
+          local exit = execute_action()
+          if exit then
+            vim.schedule(function()
+              M.disable()
+              M.after_leave()
+              M.after_leave = function() end
+            end)
+            return ""
+          end
           vim.schedule(function()
             disable_input_barrier()
             safe_on_key(callback, ns)
@@ -421,7 +440,15 @@ function M.enable(mode, init_buf)
           safe_on_key(callback, ns)
         end)
       else
-        execute_action()
+        local exit = execute_action()
+        if exit then
+          vim.schedule(function()
+            M.disable()
+            M.after_leave()
+            M.after_leave = function() end
+          end)
+          return ""
+        end
         vim.schedule(
           function()
             disable_input_barrier()
